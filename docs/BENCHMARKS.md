@@ -24,22 +24,23 @@ the honest floor for this machine.
 
 ## The engine — `bin/bench`
 
-20,000 commands from the seeded fuzzer (`PIT::Fuzz`, seed 20261104), which mixes submits, cancels and
-amends between several actors:
+20,000 commands from the seeded fuzzer (`PIT::Fuzz`, seed 20261104), generated against a live engine so its
+cancels and amends address orders that really exist:
 
 | measurement | value | rate |
 |---|---|---|
-| 20k mixed commands | 0.0273 ms | 36,641 commands/s |
-| rest a limit order behind a deep book | 0.0186 ms | binary-search insert + FIFO append |
-| submit an order that crosses one level | 0.0227 ms | price-time match, one fill |
-| cancel a resting order | 0.0096 ms | level lookup + removal |
-| amend at the same price (keeps priority) | 0.0100 ms | in-place quantity change |
-| snapshot one frame (10 levels) | 0.0077 ms | the payload the tick broadcasts at 10 Hz |
-| fingerprint the whole book (12,897 orders) | 23.2 ms | full state fingerprint |
-| replay 20k commands from scratch | 0.0400 ms | 24,989 commands/s |
+| 20k mixed commands | 0.0209 ms | 47,790 commands/s |
+| rest a limit order behind a deep book | 0.0199 ms | binary-search insert + FIFO append |
+| submit an order that crosses one level | 0.0277 ms | price-time match, one fill |
+| cancel a resting order | 0.0099 ms | level lookup + removal |
+| amend at the same price (keeps priority) | 0.0126 ms | in-place quantity change |
+| snapshot one frame (10 levels) | 0.0121 ms | the payload the tick broadcasts at 10 Hz |
+| fingerprint the whole book (5,434 orders) | 7.57 ms | full state fingerprint |
+| replay 20k commands from scratch | 0.0249 ms | 40,179 commands/s |
 | replay fingerprint == live fingerprint | true | |
 
-After the run the book held **12,897 resting orders**, 3,767 fills and 9,818 lots traded, with every
+The command mix that produced those numbers: **13,660 submits, 3,647 cancels, 2,036 amends**, 657 rejections
+and 524 self-trade events, leaving **5,434 resting orders**, 2,849 fills and 7,662 lots traded — with every
 invariant intact.
 
 ## The durable append
@@ -51,7 +52,7 @@ design's central claim. Measured two ways, because two different things are bein
 
 | measurement | value |
 |---|---|
-| INSERT + commit | **0.10 ms** |
+| INSERT + commit | **0.07 ms** |
 | INSERT, 1,000 rows in one transaction | 0.04 ms |
 
 `bin/rails pit:bench` (the same table, through Active Record, one transaction so the comparison is about
@@ -78,7 +79,7 @@ this benchmark forced:
 | | snapshot frame | what it contained |
 |---|---|---|
 | initially | **90.5 ms** | the snapshot included the full state fingerprint, computed inside the feed lock |
-| after moving the fingerprint off the tick path | **0.0077 ms** | depth, tape, counters, and the O(1) rolling event hash |
+| after moving the fingerprint off the tick path | **0.008 – 0.012 ms** | depth, tape, counters, and the O(1) rolling event hash |
 
 The tick no longer touches anything O(book). The full fingerprint is still computed — at checkpoint
 capture, in the REST read model, and for a replay's verdict — but never ten times a second, and never
@@ -109,8 +110,9 @@ the same 12,897-order book, which is why the current one looks the way it does:
 
 The 64-bit version was slower because Ruby's fixnum/bignum boundary is at 2^62: a 64-bit FNV multiply
 lands in bignum arithmetic, roughly halving throughput. A 32-bit accumulator keeps every operation in
-fixnum range. A collision would mean a silently faithful replay — about 1 in 4 billion per comparison —
-which is a fine price for a divergence detector on this path.
+fixnum range. In the latest run the same code fingerprints a 5,434-order book in 7.57 ms — about
+**1.4 µs per resting order**. A collision would mean a silently faithful replay — roughly 1 in 4 billion per
+comparison — which is a fine price for a divergence detector on this path.
 
 ## What is not benchmarked
 

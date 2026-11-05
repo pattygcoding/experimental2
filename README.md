@@ -46,8 +46,8 @@ Measured against a running instance on the machine in [docs/BENCHMARKS.md](docs/
   was live at that moment.
 - **The tick is cheap.** p50 / p95 / p99 = 0.573 / 3.163 / 8.043 ms per published frame at 10 Hz over 200
   frames — after moving the O(book) fingerprint off the tick path, where it had cost 90 ms a frame.
-- **The engine is fast where it matters.** 36,641 commands/s on a 20k-command fuzz stream, and every one
-  of the 14 invariants held throughout.
+- **The engine is fast where it matters.** 47,790 commands/s on a 20k-command fuzz stream (13,660 submits,
+  3,647 cancels, 2,036 amends), and every one of the 14 invariants held throughout.
 - **Ownership was a real bug, found by using it.** The engine used to let any actor amend or cancel any
   order — the synthetic flow was quietly amending the browser's orders. It is refused now, and
   `ownership_test.rb` plus an API test keep it that way.

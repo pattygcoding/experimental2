@@ -87,8 +87,14 @@ bench = Bench.new
 config = PIT::Config.default(tick_size: 1, lot_size: 1, self_trade: :cancel_resting)
 
 # ── the engine ────────────────────────────────────────────────────────────────────────────────
+# The command stream is generated *against a live engine*, so the fuzzer's cancels and amends address
+# orders that actually exist — the same way the invariant fuzz test builds its stream.
 live = PIT::Engine.new(config: config)
-commands = PIT::Fuzz.new(seed: 20_261_104).stream(live, 20_000)
+commands = []
+PIT::Fuzz.new(seed: 20_261_104).each(live, 20_000) do |command|
+  commands << command
+  live.apply(command)
+end
 
 bench.section("engine") do
   engine = PIT::Engine.new(config: config)
@@ -101,8 +107,10 @@ bench.section("engine") do
             format("%<rate>.0f commands/s", rate: commands.size / elapsed))
   bench.row("book after the run", format("%d resting", engine.book.resting_count),
             format("%d fills, %d lots traded", engine.trade_seq, engine.counters[:filled_qty]))
-  bench.row("rejections / self-trade events", "#{engine.counters[:rejected]} / #{engine.counters[:self_trade_events]}",
+  bench.row("command mix", format("%d submits", engine.counters[:submitted]),
             format("%d cancels, %d amends", engine.counters[:cancelled], engine.counters[:amended]))
+  bench.row("rejections / self-trade events", "#{engine.counters[:rejected]} / #{engine.counters[:self_trade_events]}",
+            "rejections are events too, and part of the fingerprint")
 end
 
 bench.section("operations (on the 20k-command book)") do
