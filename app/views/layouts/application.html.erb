@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>PIT — <%= content_for(:title) || "deterministic matching engine" %></title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="application-name" content="PIT">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="csrf-token" content="<%= form_authenticity_token %>">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+
+    <%= yield :head %>
+
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+
+  <body>
+    <header class="topbar">
+      <h1><span class="mark">PIT</span> <span class="sub">deterministic order book · every command replayed, every invariant asserted</span></h1>
+      <nav>
+        <a href="/api/markets">/api/markets</a>
+        <a href="/metrics">/metrics</a>
+        <a href="/up">/up</a>
+      </nav>
+    </header>
+
+    <main>
+      <% if notice %><p class="flash notice"><%= notice %></p><% end %>
+      <% if alert %><p class="flash alert"><%= alert %></p><% end %>
+      <%= yield %>
+    </main>
+
+    <footer>
+      <p>
+        Engine in <code>lib/pit</code> (pure Ruby, no Rails) ·
+        log in <code>commands</code> · projections in <code>orders</code>/<code>fills</code> ·
+        receipts in <code>book_checkpoints</code>
+      </p>
+    </footer>
+  </body>
+</html>

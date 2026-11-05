@@ -1,0 +1,227 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# PIT's benchmark.
+#
+# Rails-free on purpose: the engine is plain Ruby, and so is the durable-append floor it is measured
+# against. Everything the README claims about speed comes out of this one command.
+#
+#   bin/bench              print a table
+#   bin/bench --markdown   print the same numbers as markdown, for docs/BENCHMARKS.md
+#
+# Nothing here measures anything the app does not do: the same engine, the same FNV-1a fingerprint,
+# the same snapshot the tick thread broadcasts, and the same single-row INSERT the write-ahead log
+# commits before the engine sees a command.
+
+require "etc"
+require "fileutils"
+require "json"
+require "sqlite3"
+require_relative "../lib/pit"
+
+MARKDOWN = ARGV.include?("--markdown")
+
+# Collects labelled numbers and prints them either as a table or as markdown.
+class Bench
+  Row = Struct.new(:label, :value, :note)
+
+  def initialize
+    @sections = []
+  end
+
+  def section(title)
+    @rows = []
+    yield
+    @sections << [ title, @rows ]
+  end
+
+  def row(label, value, note = nil)
+    @rows << Row.new(label, value, note)
+  end
+
+  # Runs `iterations` calls and reports milliseconds per call.
+  def time(label, iterations, note = nil)
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    iterations.times { yield }
+    total = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    row(label, format("%.4f ms", total / iterations * 1000),
+        note || format("%<rate>.0f/s", rate: iterations / total))
+    total / iterations * 1000
+  end
+
+  def report
+    puts "PIT benchmark — ruby #{RUBY_VERSION}, #{Etc.nprocessors} cores, #{RUBY_PLATFORM}"
+    puts "YJIT: #{yjit_status}"
+    puts
+    @sections.each do |title, rows|
+      puts "== #{title} =="
+      rows.each { |r| puts format("  %-46s %14s   %s", r.label, r.value, r.note) }
+      puts
+    end
+  end
+
+  def markdown
+    @sections.map do |title, rows|
+      [ "### #{title}", "", "| measurement | value | rate |", "|---|---|---|" ] +
+        rows.map { |r| "| #{r.label} | #{r.value} | #{r.note} |" } + [ "" ]
+    end.join("\n")
+  end
+
+  private
+
+  def yjit_status
+    return "not built in" unless defined?(RubyVM::YJIT)
+
+    RubyVM::YJIT.respond_to?(:enabled?) ? RubyVM::YJIT.enabled? : "available"
+  end
+end
+
+def invariants_ok?(engine)
+  PIT::Invariants.assert_consistent!(engine)
+  true
+rescue PIT::InvariantViolation
+  false
+end
+
+bench = Bench.new
+config = PIT::Config.default(tick_size: 1, lot_size: 1, self_trade: :cancel_resting)
+
+# ── the engine ────────────────────────────────────────────────────────────────────────────────
+live = PIT::Engine.new(config: config)
+commands = PIT::Fuzz.new(seed: 20_261_104).stream(live, 20_000)
+
+bench.section("engine") do
+  engine = PIT::Engine.new(config: config)
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  commands.each { |command| engine.apply(command) }
+  elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+  bench.row("20k mixed commands (fuzz: submit/cancel/amend)",
+            format("%.4f ms", elapsed / commands.size * 1000),
+            format("%<rate>.0f commands/s", rate: commands.size / elapsed))
+  bench.row("book after the run", format("%d resting", engine.book.resting_count),
+            format("%d fills, %d lots traded", engine.trade_seq, engine.counters[:filled_qty]))
+  bench.row("rejections / self-trade events", "#{engine.counters[:rejected]} / #{engine.counters[:self_trade_events]}",
+            format("%d cancels, %d amends", engine.counters[:cancelled], engine.counters[:amended]))
+end
+
+bench.section("operations (on the 20k-command book)") do
+  engine = PIT::Engine.new(config: config)
+  commands.each { |command| engine.apply(command) }
+  best_bid = engine.book.best_bid || 10_000
+  counter = 0
+
+  bench.time("rest a limit order behind a deep book", 2_000, "binary-search insert + FIFO append") do
+    counter += 1
+    engine.apply(PIT::Commands.submit(id: "b#{counter}", side: :buy, price: best_bid - 1_000, qty: 1,
+                                      actor: "bench"))
+  end
+
+  bench.time("submit an order that crosses one level", 2_000, "price-time match, one fill") do
+    counter += 1
+    engine.apply(PIT::Commands.submit(id: "x#{counter}", side: :sell, price: best_bid + 1, qty: 1,
+                                      actor: "bench-taker"))
+  end
+
+  bench.time("cancel a resting order", 2_000, "level lookup + removal") do
+    order = engine.book.best_bid_order
+    next unless order
+
+    counter += 1
+    engine.apply(PIT::Commands.cancel(id: "c#{counter}", order_id: order.id, actor: order.actor))
+  end
+
+  bench.time("amend at the same price (keeps priority)", 2_000, "in-place quantity change") do
+    order = engine.book.best_bid_order
+    next unless order
+
+    counter += 1
+    engine.apply(PIT::Commands.amend(id: "a#{counter}", order_id: order.id, price: order.price,
+                                     qty: order.remaining + 1, actor: order.actor))
+  end
+
+  bench.time("snapshot one frame (10 levels)", 2_000, "what the socket sends at 10 Hz") do
+    engine.snapshot(levels: 10)
+  end
+
+  bench.time("fingerprint the whole book", 200, "FNV-1a over every resting order + all events") do
+    engine.fingerprint
+  end
+end
+
+# ── determinism and replay ────────────────────────────────────────────────────────────────────
+bench.section("determinism and replay") do
+  reference = PIT::Engine.new(config: config)
+  commands.each { |command| reference.apply(command) }
+
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  PIT::Replayer.replay(config: config, commands: commands)
+  replay_elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+  replayed = PIT::Replayer.replay(config: config, commands: commands)
+  bench.row("replay 20k commands from scratch",
+            format("%.4f ms", replay_elapsed / commands.size * 1000),
+            format("%<rate>.0f commands/s", rate: commands.size / replay_elapsed))
+  bench.row("replay fingerprint == live fingerprint",
+            (replayed.fingerprint == reference.fingerprint).to_s, reference.fingerprint)
+  bench.row("invariants held after the whole run", invariants_ok?(reference).to_s,
+            "14 checks — see lib/pit/invariants.rb")
+end
+
+# ── the durable append ────────────────────────────────────────────────────────────────────────
+# The same schema and the same pragmas as the app's storage/development.sqlite3. This is the cost
+# that is paid *before* the engine sees a command — the price of "the log is the truth".
+bench.section("durable append (sqlite)") do
+  path = File.expand_path("../tmp/bench.sqlite3", __dir__)
+  FileUtils.mkdir_p(File.dirname(path))
+  FileUtils.rm_f(path)
+  db = SQLite3::Database.new(path)
+  db.execute("PRAGMA journal_mode=WAL")
+  db.execute("PRAGMA synchronous=NORMAL")
+  db.execute_batch(<<~SQL)
+    CREATE TABLE commands (
+      id integer PRIMARY KEY AUTOINCREMENT,
+      instrument_id integer NOT NULL,
+      position integer NOT NULL,
+      kind varchar NOT NULL,
+      actor varchar NOT NULL,
+      command_id varchar NOT NULL,
+      payload json NOT NULL,
+      created_at datetime NOT NULL
+    );
+    CREATE UNIQUE INDEX index_commands_on_instrument_id_and_position ON commands (instrument_id, position);
+    CREATE UNIQUE INDEX index_commands_on_instrument_id_and_command_id ON commands (instrument_id, command_id);
+  SQL
+
+  bench.row("pragmas", "journal_mode=#{db.execute('PRAGMA journal_mode').first.first}",
+            "synchronous=#{db.execute('PRAGMA synchronous').first.first}")
+
+  payload = PIT::Commands.to_h(PIT::Commands.submit(id: "x", side: :buy, price: 1, qty: 1,
+                                                    actor: "bench")).to_json
+  now = Time.now.utc.strftime("%Y-%m-%d %H:%M:%S.%6N")
+  insert = "INSERT INTO commands (instrument_id, position, kind, actor, command_id, payload, created_at) " \
+           "VALUES (1, %d, 'submit', 'bench', '%s', '%s', '#{now}')"
+  next_position = -> { db.execute("SELECT max(position) FROM commands").first.first.to_i + 1 }
+
+  bench.time("INSERT + commit — the acceptance path", 1_000, "durable before the engine matches") do
+    position = next_position.call
+    db.execute(format(insert, position, "a-#{position}", payload))
+  end
+
+  db.execute("BEGIN")
+  begin
+    bench.time("INSERT — 1k rows inside one transaction", 1_000, "no commit per row") do
+      position = next_position.call
+      db.execute(format(insert, position, "b-#{position}", payload))
+    end
+  ensure
+    db.execute("ROLLBACK")
+  end
+
+  db.close
+  [ path, "#{path}-wal", "#{path}-shm" ].each { |file| FileUtils.rm_f(file) }
+end
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+puts MARKDOWN ? bench.markdown : bench.report

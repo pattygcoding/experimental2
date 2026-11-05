@@ -1,0 +1,119 @@
+/* PIT — a trading terminal, hand-written. No CSS framework, no build step: Propshaft serves this
+   file as-is, exactly as HEXARENA's static client ships without a bundler. */
+
+:root {
+  --bg: #0b0e13;
+  --panel: #121722;
+  --line: #1e2637;
+  --text: #d7dee8;
+  --muted: #7b8a9e;
+  --bid: #2fbf71;
+  --ask: #ef5350;
+  --accent: #62b6ff;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 var(--mono);
+}
+
+.topbar {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 12px 18px; border-bottom: 1px solid var(--line); background: #0e131c;
+}
+.topbar h1 { font-size: 14px; margin: 0; font-weight: 600; }
+.topbar .mark { color: var(--accent); letter-spacing: 2px; }
+.topbar .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+.topbar nav a { color: var(--muted); margin-left: 14px; text-decoration: none; }
+.topbar nav a:hover { color: var(--accent); }
+
+main { padding: 18px; }
+footer { padding: 12px 18px 24px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); }
+
+.board {
+  display: grid; gap: 14px;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+  align-items: start;
+}
+@media (max-width: 860px) { .board { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px;
+}
+.panel h2 { font-size: 12px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+.replay-panel { grid-column: 1 / -1; }
+
+.muted { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.tiny { font-size: 11px; margin-top: 8px; }
+code { color: var(--accent); }
+.ok { color: var(--bid); }
+.bad { color: var(--ask); }
+
+/* ── ladder ──────────────────────────────────────────────────────────────────────── */
+.touch { display: flex; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+.tick { display: flex; flex-direction: column; min-width: 74px; }
+.tick .label { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.tick .value { font-size: 18px; }
+.value.bid { color: var(--bid); }
+.value.ask { color: var(--ask); }
+
+table { width: 100%; border-collapse: collapse; }
+th { color: var(--muted); font-weight: 400; font-size: 10px; text-transform: uppercase; text-align: right; }
+th:first-child, td:first-child { text-align: left; }
+td { text-align: right; padding: 1px 0; font-variant-numeric: tabular-nums; }
+
+/* The depth bar: one custom property, painted as a right-anchored block behind the numbers. */
+.ladder-row { position: relative; }
+.ladder-row td { position: relative; z-index: 1; }
+.ladder-row::before {
+  content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: var(--depth, 0);
+  opacity: .18; pointer-events: none; z-index: 0;
+}
+tr.bid::before { background: var(--bid); }
+tr.ask::before { background: var(--ask); }
+.ladder-row.bid .price { color: var(--bid); }
+.ladder-row.ask .price { color: var(--ask); }
+
+.tape tr { border-bottom: 1px solid rgba(255, 255, 255, .03); }
+.tape tr.buy td:nth-child(2), .tape tr.buy td:nth-child(4) { color: var(--bid); }
+.tape tr.sell td:nth-child(2), .tape tr.sell td:nth-child(4) { color: var(--ask); }
+
+/* ── forms ───────────────────────────────────────────────────────────────────────── */
+.ticket fieldset { border: 0; padding: 0; margin: 0 0 8px; }
+.ticket legend { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.ticket .row { display: flex; gap: 10px; margin: 6px 0; }
+.ticket label {
+  display: flex; flex-direction: column; color: var(--muted); font-size: 10px;
+  text-transform: uppercase; gap: 3px; flex: 1;
+}
+input, select {
+  background: #0a0e15; color: var(--text); border: 1px solid var(--line);
+  border-radius: 4px; padding: 5px 7px; font: inherit;
+}
+input[type=radio] { accent-color: var(--accent); }
+button, input[type=submit] {
+  background: #1b2536; color: var(--text); border: 1px solid var(--line); border-radius: 4px;
+  padding: 6px 10px; font: inherit; cursor: pointer;
+}
+button:hover, input[type=submit]:hover { border-color: var(--accent); color: var(--accent); }
+.orders td.buy { color: var(--bid); font-weight: 600; }
+.orders td.sell { color: var(--ask); font-weight: 600; }
+
+/* ── log + flash ─────────────────────────────────────────────────────────────────── */
+.blog { list-style: none; margin: 0; padding: 0; max-height: 190px; overflow-y: auto; font-size: 11px; }
+.blog li { padding: 1px 0; border-bottom: 1px solid rgba(255, 255, 255, .03); color: var(--muted); }
+.blog li:first-child { color: var(--text); }
+
+.flash { margin: 0 0 12px; padding: 8px 12px; border-radius: 5px; border: 1px solid var(--line); }
+.flash.notice { border-color: #2c4a37; background: #10201a; color: #a6e3bf; }
+.flash.alert { border-color: #4a2c2c; background: #201214; color: #f0b7b7; }
+
+.replay-controls { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 10px; }
+.replay-result { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0; }
+.replay-result dt { color: var(--muted); }
+.replay-result dd { margin: 0; }

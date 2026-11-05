@@ -1,0 +1,178 @@
+<% content_for :title, @instrument.symbol %>
+
+<div class="board"
+     data-controller="market"
+     data-market-symbol-value="<%= @instrument.symbol %>">
+  <%# ── the market ───────────────────────────────────────────────────────────────────── %>
+  <section class="panel ladder-panel">
+    <h2>
+      <%= @instrument.symbol %>
+      <span class="muted">tick <%= @instrument.tick_size %> · lot <%= @instrument.lot_size %> · self-trade <%= @instrument.self_trade_policy %></span>
+    </h2>
+
+    <div class="touch">
+      <div class="tick">
+        <span class="label">bid</span>
+        <span class="value bid" data-market-target="bestBid"><%= @snapshot["bestBid"] || "—" %></span>
+      </div>
+      <div class="tick">
+        <span class="label">spread</span>
+        <span class="value" data-market-target="spread"><%= @snapshot["spread"] || "—" %></span>
+      </div>
+      <div class="tick">
+        <span class="label">ask</span>
+        <span class="value ask" data-market-target="bestAsk"><%= @snapshot["bestAsk"] || "—" %></span>
+      </div>
+      <div class="tick">
+        <span class="label">last</span>
+        <span class="value" data-market-target="lastTrade"><%= @snapshot["lastTradePrice"] || "—" %></span>
+      </div>
+    </div>
+
+    <table class="ladder">
+      <thead>
+        <tr><th colspan="3">asks</th></tr>
+        <tr><th>price</th><th>qty</th><th>cum</th></tr>
+      </thead>
+      <tbody data-market-target="asks">
+        <% @snapshot["asks"].reverse.each do |level| %>
+          <tr class="ladder-row ask">
+            <td class="price"><%= level[:price] %></td>
+            <td class="qty"><%= level[:qty] %></td>
+            <td class="cum"><%= level[:cumulative] %></td>
+          </tr>
+        <% end %>
+      </tbody>
+      <tbody class="bids" data-market-target="bids">
+        <% @snapshot["bids"].each do |level| %>
+          <tr class="ladder-row bid">
+            <td class="price"><%= level[:price] %></td>
+            <td class="qty"><%= level[:qty] %></td>
+            <td class="cum"><%= level[:cumulative] %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+
+  <%# ── the ticket ───────────────────────────────────────────────────────────────────── %>
+  <section class="panel">
+    <h2>order ticket <span class="muted">as <%= current_trader %></span></h2>
+
+    <%= form_with url: book_orders_path(@instrument.symbol), method: :post, class: "ticket" do %>
+      <input type="hidden" name="command_id" value="<%= "cmd-#{SecureRandom.hex(6)}" %>">
+
+      <fieldset>
+        <legend>side</legend>
+        <label><%= radio_button_tag :side, "buy", true %> buy</label>
+        <label><%= radio_button_tag :side, "sell" %> sell</label>
+      </fieldset>
+
+      <div class="row">
+        <label>type <%= select_tag :type, options_for_select(%w[limit market]) %></label>
+        <label>tif <%= select_tag :tif, options_for_select(%w[gtc ioc fok]) %></label>
+      </div>
+
+      <div class="row">
+        <label>price
+          <%= number_field_tag :price, @snapshot["mid"] || 10_000, step: @instrument.tick_size, min: @instrument.tick_size %>
+        </label>
+        <label>qty
+          <%= number_field_tag :qty, @instrument.lot_size * 5, step: @instrument.lot_size, min: @instrument.lot_size %>
+        </label>
+      </div>
+
+      <%= submit_tag "submit order" %>
+      <p class="muted tiny">
+        Market orders ignore the price. <code>ioc</code> kills the remainder, <code>fok</code> is
+        all-or-nothing. Your actor is signed by the server, so crossing yourself has to go through
+        the self-trade policy named above.
+      </p>
+    <% end %>
+  </section>
+
+  <%# ── my orders ────────────────────────────────────────────────────────────────────── %>
+  <section class="panel">
+    <h2>your working orders <span class="muted" data-market-target="myOrderCount"><%= @my_orders.size %></span></h2>
+    <table class="orders">
+      <thead><tr><th>id</th><th>side</th><th>price</th><th>remaining</th><th></th></tr></thead>
+      <tbody data-market-target="myOrders">
+        <% @my_orders.each do |order| %>
+          <tr data-order-id="<%= order["orderId"] %>">
+            <td>#<%= order["orderId"] %></td>
+            <td class="<%= order["side"] %>"><%= order["side"] %></td>
+            <td><%= order["price"] || "mkt" %></td>
+            <td><%= order["remaining"] %></td>
+            <td><button type="button" data-action="market#cancelOrder" data-order-id="<%= order["orderId"] %>">cancel</button></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+    <p class="muted tiny">Cancelling is a command like any other: it is logged before it reaches the engine.</p>
+  </section>
+
+  <%# ── the tape ─────────────────────────────────────────────────────────────────────── %>
+  <section class="panel">
+    <h2>tape <span class="muted">last <span data-market-target="tapeCount"><%= @tape.size %></span> prints</span></h2>
+    <table class="tape">
+      <thead><tr><th>trade</th><th>price</th><th>qty</th><th>aggressor</th></tr></thead>
+      <tbody data-market-target="tape">
+        <% @tape.reverse.each do |fill| %>
+          <tr class="<%= fill["aggressor"] %>">
+            <td>#<%= fill["tradeSeq"] %></td>
+            <td><%= fill["price"] %></td>
+            <td><%= fill["qty"] %></td>
+            <td><%= fill["aggressor"] %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+
+  <%# ── the engine's own log ─────────────────────────────────────────────────────────── %>
+  <section class="panel">
+    <h2>engine activity <span class="muted">straight off the wire</span></h2>
+    <ol class="blog" data-market-target="eventLog"></ol>
+    <p class="muted tiny">
+      Every line is a fact the engine emitted, folded into the fingerprint. Rejections are facts
+      too — which is why a replay that drops one does not verify.
+    </p>
+  </section>
+
+  <%# ── replay / time travel ─────────────────────────────────────────────────────────── %>
+  <section class="panel replay-panel">
+    <h2>replay the log <span class="muted">rebuild the book from <code>commands</code></span></h2>
+    <p class="muted tiny">
+      The database stores no book. Move the slider to fold the log up to that command, and the book
+      is rebuilt from scratch and compared against the fingerprints recorded while it was live.
+    </p>
+
+    <div class="replay-controls">
+      <label>at command
+        <input type="number" min="0" max="<%= @stats[:commands] %>" value="<%= @stats[:commands] %>"
+               data-market-target="replayAt" data-action="input->market#replay">
+      </label>
+      <button type="button" data-action="market#replay">rebuild</button>
+    </div>
+
+    <dl class="replay-result" data-market-target="replayResult">
+      <dt>live state hash</dt>
+      <dd><code data-market-target="liveFingerprint"><%= @snapshot["stateHash"] %></code>
+        <span class="muted tiny">rolling hash of every event, O(1) — the header number</span></dd>
+      <dt>live now</dt>
+      <dd><span data-market-target="liveCommands"><%= @stats[:commands] %></span> commands
+        (<%= @stats[:warm_up_commands] %> replayed at boot) ·
+        <%= @instrument.book_checkpoints.count %> checkpoints ·
+        <%= @instrument.fills.count %> fills stored</dd>
+      <dt>last checkpoint</dt>
+      <dd>
+        <% if @checkpoint %>
+          command <%= @checkpoint.position %> ⇒ <code><%= @checkpoint.fingerprint %></code>
+          <span class="muted tiny">full state fingerprint, captured live</span>
+        <% else %>
+          none yet — one is captured every <%= MarketFeed::CHECKPOINT_EVERY %> commands
+        <% end %>
+      </dd>
+    </dl>
+  </section>
+</div>

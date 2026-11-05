@@ -1,0 +1,19 @@
+# Two instruments, mirroring db/seeds.rb. The synthetic flow is off in tests: a bot thread racing
+# the assertions would make failures unrepeatable, and there is a dedicated test for the flow.
+pit_usd:
+  symbol: PIT-USD
+  tick_size: 1
+  lot_size: 1
+  self_trade_policy: cancel_resting
+  seed: 20261104
+  synthetic_flow: false
+  synthetic_rate: 6
+
+pit_eur:
+  symbol: PIT-EUR
+  tick_size: 5
+  lot_size: 10
+  self_trade_policy: skip
+  seed: 4242
+  synthetic_flow: false
+  synthetic_rate: 3
